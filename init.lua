@@ -99,6 +99,60 @@ local function result_limit()
   return tonumber(config.result_limit) or 24
 end
 
+local function match(entry, action_kind, score)
+  return {
+    id = action_kind .. ":" .. entry.char,
+    title = entry.char .. " " .. entry.primary,
+    score = score,
+    payload = {
+      kind = action_kind,
+      emoji = entry.char,
+    },
+  }
+end
+
+local function prefix_matches(entries, query, action_kind)
+  local candidates = {}
+
+  for _, entry in ipairs(entries) do
+    for term, weight in pairs(entry.terms) do
+      if term:sub(1, #query) == query then
+        table.insert(candidates, {
+          entry = entry,
+          term = term,
+          weight = weight,
+        })
+      end
+    end
+  end
+
+  table.sort(candidates, function(left, right)
+    if left.term ~= right.term then
+      return left.term < right.term
+    end
+    if left.weight ~= right.weight then
+      return left.weight > right.weight
+    end
+    return left.entry.primary < right.entry.primary
+  end)
+
+  local matches = {}
+  local seen = {}
+  local limit = result_limit()
+
+  for _, candidate in ipairs(candidates) do
+    if not seen[candidate.entry.char] then
+      seen[candidate.entry.char] = true
+      table.insert(matches, match(candidate.entry, action_kind, 1000000000000 - #matches))
+      if #matches == limit then
+        break
+      end
+    end
+  end
+
+  return matches
+end
+
 local function hint(title)
   return {
     {
@@ -126,17 +180,22 @@ local function search(raw, action_kind)
   end
 
   for _, entry in ipairs(entries) do
+    if entry.char == query then
+      return { match(entry, action_kind, 1000000000000000) }
+    end
+  end
+
+  if #terms == 1 then
+    local prefixed = prefix_matches(entries, query, action_kind)
+    if #prefixed > 0 then
+      return prefixed
+    end
+  end
+
+  for _, entry in ipairs(entries) do
     local score = emoji_score(entry, query, terms)
     if score > 0 then
-      table.insert(matches, {
-        id = action_kind .. ":" .. entry.char,
-        title = entry.char .. " " .. entry.primary,
-        score = score,
-        payload = {
-          kind = action_kind,
-          emoji = entry.char,
-        },
-      })
+      table.insert(matches, match(entry, action_kind, score))
     end
   end
 
