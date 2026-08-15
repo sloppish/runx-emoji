@@ -7,55 +7,91 @@ local function trim(value)
 end
 
 local function data_path()
-  return runx.plugin_dir .. "/emoji.json"
+  return runx.plugin_dir .. "/emoji-search.json"
 end
 
+local function exporter_path()
+  return runx.plugin_dir .. "/tools/emoji-index-exporter"
+end
+
+local function file_exists(path)
+  local file = io.open(path, "r")
+  if not file then
+    return false
+  end
+  file:close()
+  return true
+end
+
+local function ensure_data()
+  local path = data_path()
+  if file_exists(path) then
+    return true
+  end
+
+  local ok, result = pcall(runx.exec_status, exporter_path(), { path })
+  return ok and result == true and file_exists(path)
+end
+
+local cached_entries
+
 local function load_emojis()
+  if cached_entries then
+    return cached_entries
+  end
+
+  if not ensure_data() then
+    return nil
+  end
+
   local entries = {}
   local data = runx.json_decode(runx.read_text(data_path()))
 
-  for emoji, keywords in pairs(data) do
-    if emoji ~= "" and #keywords > 0 then
+  for emoji, value in pairs(data.emoji) do
+    if emoji ~= "" and value.name ~= "" then
       table.insert(entries, {
         char = emoji,
-        aliases = keywords,
-        primary = keywords[1]:gsub("_", " "),
+        primary = value.name,
+        terms = value.terms,
       })
     end
   end
 
+  cached_entries = entries
   return entries
 end
 
-local function alias_score(alias, query)
-  local lowered = alias:lower()
-
-  if lowered == query then
-    return 100000
+local function query_terms(query)
+  local terms = {}
+  for term in query:gmatch("%S+") do
+    table.insert(terms, term)
   end
-
-  if lowered:find(query, 1, true) then
-    return 50000 + #query * 100 - #lowered
-  end
-
-  return runx.fuzzy_score(lowered, query)
+  return terms
 end
 
-local function emoji_score(entry, query)
+local function emoji_score(entry, query, terms)
   if entry.char == query then
-    return 120000
+    return 1000000000000000
   end
 
-  local best = 0
+  local exact = entry.terms[query]
+  if exact then
+    return exact
+  end
 
-  for _, keyword in ipairs(entry.aliases) do
-    local score = alias_score(keyword, query)
-    if score > best then
-      best = score
+  if #terms > 1 then
+    local total = 0
+    for _, term in ipairs(terms) do
+      local weight = entry.terms[term]
+      if not weight then
+        return 0
+      end
+      total = total + weight
     end
+    return math.floor(total / #terms)
   end
 
-  return best
+  return 0
 end
 
 local function result_limit()
@@ -83,9 +119,14 @@ local function search(raw, action_kind)
   end
 
   local matches = {}
+  local terms = query_terms(query)
+  local entries = load_emojis()
+  if not entries then
+    return hint("Could not generate the local Apple emoji search index")
+  end
 
-  for _, entry in ipairs(load_emojis()) do
-    local score = emoji_score(entry, query)
+  for _, entry in ipairs(entries) do
+    local score = emoji_score(entry, query, terms)
     if score > 0 then
       table.insert(matches, {
         id = action_kind .. ":" .. entry.char,

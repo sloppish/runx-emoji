@@ -1,0 +1,8 @@
+semantic-search/.cache/
+semantic-search/.venv/
+semantic-search/data/
+semantic-search/mappings.json
+semantic-search/emoji-order.json
+
+# Generated locally from Apple's proprietary CoreEmoji resources. Do not distribute.
+emoji-search.json
